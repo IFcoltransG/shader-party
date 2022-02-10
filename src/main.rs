@@ -12,6 +12,7 @@ struct State {
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     size: winit::dpi::PhysicalSize<u32>,
+    colour: wgpu::Color,
 }
 
 impl State {
@@ -56,12 +57,20 @@ impl State {
             present_mode: wgpu::PresentMode::Fifo,
         };
         surface.configure(&device, &config);
+        // set to bluish
+        let colour = wgpu::Color {
+            r: 0.1,
+            g: 0.2,
+            b: 0.3,
+            a: 1.0,
+        };
         Self {
             surface,
             device,
             queue,
             config,
             size,
+            colour,
         }
     }
 
@@ -76,8 +85,19 @@ impl State {
 
     fn input(&mut self, event: &WindowEvent) -> bool {
         // bool represents whether the event has been fully processed
-        // (main should process further)
-        false
+        match event {
+            WindowEvent::CursorMoved { position, .. } => {
+                // set colour based on distance of mouse from top left
+                self.colour.r = position.x / self.size.width as f64;
+                self.colour.g = position.y / self.size.height as f64;
+                // main should not process further
+                true
+            }
+            _ => {
+                // main should process further
+                false
+            }
+        }
     }
 
     fn update(&mut self) {}
@@ -96,16 +116,17 @@ impl State {
             });
         let render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Render Pass"),
+            // where to draw colour to
             color_attachments: &[wgpu::RenderPassColorAttachment {
+                // render to the TextureView on the screen's surface
                 view: &view,
+                // defaults to &view if multisampling is off
                 resolve_target: None,
+                // what to do with colours on the screen from `view`
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color {
-                        r: 0.1,
-                        g: 0.2,
-                        b: 0.3,
-                        a: 1.0,
-                    }),
+                    // clear them (because not all screen is covered by objects)
+                    load: wgpu::LoadOp::Clear(self.colour),
+                    // yes we do want to store the result
                     store: true,
                 },
             }],
