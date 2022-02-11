@@ -13,7 +13,6 @@ struct State {
     config: wgpu::SurfaceConfiguration,
     size: winit::dpi::PhysicalSize<u32>,
     render_pipeline: wgpu::RenderPipeline,
-    alternate_pipeline: wgpu::RenderPipeline,
     colour: wgpu::Color,
 }
 
@@ -59,18 +58,17 @@ impl State {
             present_mode: wgpu::PresentMode::Fifo,
         };
         surface.configure(&device, &config);
+        // load shader from file
+        let shader = device.create_shader_module(&wgpu::ShaderModuleDescriptor {
+            label: Some("Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
+        });
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
                 bind_group_layouts: &[],
                 push_constant_ranges: &[],
             });
-
-        // load shader from file
-        let shader = device.create_shader_module(&wgpu::ShaderModuleDescriptor {
-            label: Some("Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
-        });
         let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Render Pipeline"),
             layout: Some(&render_pipeline_layout),
@@ -120,46 +118,6 @@ impl State {
             // not using array textures
             multiview: None,
         });
-
-        let alternative_shader = device.create_shader_module(&wgpu::ShaderModuleDescriptor {
-            label: Some("Alternative Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("alt-shader.wgsl").into()),
-        });
-        let alternate_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Render Pipeline"),
-            layout: Some(&render_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &alternative_shader,
-                entry_point: "vs_main",
-                buffers: &[],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &alternative_shader,
-                entry_point: "fs_main",
-                targets: &[wgpu::ColorTargetState {
-                    format: config.format,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                }],
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
-                polygon_mode: wgpu::PolygonMode::Fill,
-                unclipped_depth: false,
-                conservative: false,
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState {
-                count: 1,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            multiview: None,
-        });
-
         // a bluish colour as default
         let colour = wgpu::Color {
             r: 0.1,
@@ -174,7 +132,6 @@ impl State {
             config,
             size,
             render_pipeline,
-            alternate_pipeline,
             colour,
         }
     }
@@ -191,21 +148,9 @@ impl State {
     fn input(&mut self, event: &WindowEvent) -> bool {
         // bool represents whether the event has been fully processed
         match event {
-            WindowEvent::CursorMoved { position, .. } => {
+            WindowEvent::CursorMoved {position, ..} => {
                 self.colour.r = position.x / self.size.width as f64;
                 self.colour.g = position.y / self.size.height as f64;
-                true
-            }
-            WindowEvent::KeyboardInput {
-                input:
-                    KeyboardInput {
-                        state: ElementState::Pressed,
-                        virtual_keycode: Some(VirtualKeyCode::Space),
-                        ..
-                    },
-                ..
-            } => {
-                std::mem::swap(&mut self.alternate_pipeline, &mut self.render_pipeline);
                 true
             }
             _ => {

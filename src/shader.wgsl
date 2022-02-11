@@ -25,5 +25,6 @@ fn vs_main(
 [[stage(fragment)]]
 // WGPU detects that it should store the vec4 return value in the colour target at index 0
 fn fs_main(in: VertexOutput) -> [[location(0)]] vec4<f32> {
+    // set colour to brown
     return vec4<f32>(0.3, 0.2, 0.1, 1.0);
 }
