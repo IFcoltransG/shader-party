@@ -13,6 +13,7 @@ struct State {
     config: wgpu::SurfaceConfiguration,
     size: winit::dpi::PhysicalSize<u32>,
     render_pipeline: wgpu::RenderPipeline,
+    colour: wgpu::Color,
 }
 
 impl State {
@@ -117,6 +118,13 @@ impl State {
             // not using array textures
             multiview: None,
         });
+        // a bluish colour as default
+        let colour = wgpu::Color {
+            r: 0.1,
+            g: 0.2,
+            b: 0.3,
+            a: 1.0,
+        };
         Self {
             surface,
             device,
@@ -124,6 +132,7 @@ impl State {
             config,
             size,
             render_pipeline,
+            colour,
         }
     }
 
@@ -139,6 +148,11 @@ impl State {
     fn input(&mut self, event: &WindowEvent) -> bool {
         // bool represents whether the event has been fully processed
         match event {
+            WindowEvent::CursorMoved {position, ..} => {
+                self.colour.r = position.x / self.size.width as f64;
+                self.colour.g = position.y / self.size.height as f64;
+                true
+            }
             _ => {
                 // main should process further
                 false
@@ -173,15 +187,7 @@ impl State {
                     // what to do with colours on the screen from `view`
                     ops: wgpu::Operations {
                         // clear them (because not all screen is covered by objects)
-                        load: wgpu::LoadOp::Clear(
-                            // bluish
-                            wgpu::Color {
-                                r: 0.1,
-                                g: 0.2,
-                                b: 0.3,
-                                a: 1.0,
-                            },
-                        ),
+                        load: wgpu::LoadOp::Clear(self.colour),
                         // yes we do want to store the result
                         store: true,
                     },
