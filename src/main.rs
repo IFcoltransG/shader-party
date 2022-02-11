@@ -12,7 +12,7 @@ struct State {
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     size: winit::dpi::PhysicalSize<u32>,
-    colour: wgpu::Color,
+    render_pipeline: wgpu::RenderPipeline,
 }
 
 impl State {
@@ -57,20 +57,73 @@ impl State {
             present_mode: wgpu::PresentMode::Fifo,
         };
         surface.configure(&device, &config);
-        // set to bluish
-        let colour = wgpu::Color {
-            r: 0.1,
-            g: 0.2,
-            b: 0.3,
-            a: 1.0,
-        };
+        // load shader from file
+        let shader = device.create_shader_module(&wgpu::ShaderModuleDescriptor {
+            label: Some("Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
+        });
+        let render_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Render Pipeline Layout"),
+                bind_group_layouts: &[],
+                push_constant_ranges: &[],
+            });
+        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Render Pipeline"),
+            layout: Some(&render_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: "vs_main",
+                buffers: &[], // vertex types empty because vertices are specified in the shader
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: "fs_main",
+                targets: &[wgpu::ColorTargetState {
+                    // same format as the surface for easier copying
+                    format: config.format,
+                    // don't care about old pixels, just replace them
+                    blend: Some(wgpu::BlendState::REPLACE),
+                    // write to every colour channel including alpha
+                    write_mask: wgpu::ColorWrites::ALL,
+                }],
+            }),
+            // how to interpret vertices as triangles
+            primitive: wgpu::PrimitiveState {
+                // chunk vertices into triplets as triangles
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                // a triangle is facing forward whenever vertices are arranged 'counter-clockwise'
+                front_face: wgpu::FrontFace::Ccw,
+                // cull back faces
+                cull_mode: Some(wgpu::Face::Back),
+                // must be Fill unless GPU supports NON_FILL_POLYGON_MODE
+                polygon_mode: wgpu::PolygonMode::Fill,
+                // must be false unless DEPTH_CLIP_CONTROL
+                unclipped_depth: false,
+                // must be false unless CONSERVATIVE_RASTERIZATION
+                conservative: false,
+            },
+            depth_stencil: None,
+            // use one buffer
+            multisample: wgpu::MultisampleState {
+                // only one sample
+                count: 1,
+                // bits set to use all samples
+                mask: !0,
+                // no antialiasing
+                alpha_to_coverage_enabled: false,
+            },
+            // not using array textures
+            multiview: None,
+        });
         Self {
             surface,
             device,
             queue,
             config,
             size,
-            colour,
+            render_pipeline,
         }
     }
 
@@ -86,13 +139,6 @@ impl State {
     fn input(&mut self, event: &WindowEvent) -> bool {
         // bool represents whether the event has been fully processed
         match event {
-            WindowEvent::CursorMoved { position, .. } => {
-                // set colour based on distance of mouse from top left
-                self.colour.r = position.x / self.size.width as f64;
-                self.colour.g = position.y / self.size.height as f64;
-                // main should not process further
-                true
-            }
             _ => {
                 // main should process further
                 false
@@ -114,24 +160,40 @@ impl State {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Render Encoder"),
             });
-        let render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Render Pass"),
             // where to draw colour to
-            color_attachments: &[wgpu::RenderPassColorAttachment {
-                // render to the TextureView on the screen's surface
-                view: &view,
-                // defaults to &view if multisampling is off
-                resolve_target: None,
-                // what to do with colours on the screen from `view`
-                ops: wgpu::Operations {
-                    // clear them (because not all screen is covered by objects)
-                    load: wgpu::LoadOp::Clear(self.colour),
-                    // yes we do want to store the result
-                    store: true,
+            color_attachments: &[
+                // `[[location(0)]]` in the fragment shader is this attachment
+                wgpu::RenderPassColorAttachment {
+                    // render to the TextureView on the screen's surface
+                    view: &view,
+                    // defaults to &view if multisampling is off
+                    resolve_target: None,
+                    // what to do with colours on the screen from `view`
+                    ops: wgpu::Operations {
+                        // clear them (because not all screen is covered by objects)
+                        load: wgpu::LoadOp::Clear(
+                            // bluish
+                            wgpu::Color {
+                                r: 0.1,
+                                g: 0.2,
+                                b: 0.3,
+                                a: 1.0,
+                            },
+                        ),
+                        // yes we do want to store the result
+                        store: true,
+                    },
                 },
-            }],
+            ],
             depth_stencil_attachment: None,
         });
+
+        render_pass.set_pipeline(&self.render_pipeline);
+        // draw something with three vertices and one instance
+        render_pass.draw(0..3, 0..1);
+
         // drop render pass (which owns a &mut encoder) so it can be .finish()ed
         drop(render_pass);
         // submit() takes any IntoIter
