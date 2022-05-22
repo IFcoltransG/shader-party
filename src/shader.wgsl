@@ -180,10 +180,10 @@ fn fs_main(in: VertexOutput) -> [[location(0)]] vec4<f32> {
     let green = one_zero.yxyx;
     let blue = one_zero.yyxx;
 
-    // let out = min(line_res, vec4<f32>(square_res * 1.05)) * 2.0;
-    let out = line_res;
+    let out = min(line_res, vec4<f32>(square_res * 1.05)) * 2.0;
+    // let out = line_res;
     let mixer = vec4<f32>(sqrt(out).x, out.x, out.x * out.x, 1.0);
-    return mix(red * 0.3 + green * 0.05 + 0.4, blue * 0.1, mixer * mixer + mixer);
+    return mix(blue * 0.1, red + 0.5 + green * 0.05, mixer);
     // return vec4<f32>(scale);
 }
 
