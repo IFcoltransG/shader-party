@@ -1,12 +1,15 @@
 // using https://sotrh.github.io/learn-wgpu/
 
-use shader::State;
 use wgpu::SurfaceError;
 use winit::{
     event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
     window::WindowBuilder,
 };
+
+mod shader;
+
+use self::shader::State;
 
 fn main() {
     env_logger::init();
@@ -87,5 +90,3 @@ fn main() {
         _ => {}
     });
 }
-
-mod shader;

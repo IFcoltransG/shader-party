@@ -1,29 +1,14 @@
-use bytemuck::{Pod, Zeroable};
 use std::{fs, time::Instant};
 use wgpu::{util::DeviceExt, *};
 use winit::{dpi::PhysicalSize, event::*, window::Window};
 
-#[repr(C)]
-#[derive(Copy, Clone, Debug, Pod, Zeroable)]
-struct CameraUniform {
-    // can't bytemuck a cgmath matrix
-    view_proj: [[f32; 4]; 4],
-}
+mod geometry;
+mod uniforms;
 
-#[repr(C)]
-#[derive(Copy, Clone, Debug, Pod, Zeroable)]
-struct TimeUniform {
-    time: u32,
-}
-
-#[repr(C)]
-#[derive(Copy, Clone, Debug, Pod, Zeroable)]
-struct MouseUniform {
-    cursor_pos: [f32; 2],
-    // click_time: [u32; 3],
-    // clicking: [u8; 3],
-    // cursor_over_window: u8,
-}
+use self::{
+    geometry::{Vertex, INDICES, VERTICES},
+    uniforms::{MouseUniform, TimeUniform},
+};
 
 pub(super) struct State {
     surface: Surface,
@@ -44,78 +29,6 @@ pub(super) struct State {
     mouse_uniform: MouseUniform,
     mouse_buffer: Buffer,
     mouse_bind_group: BindGroup,
-}
-
-#[repr(C)]
-#[derive(Copy, Clone, Debug, Pod, Zeroable)]
-struct Vertex {
-    position: [f32; 3],
-    tex_coords: [f32; 2],
-}
-
-// square, a quad's corners
-const VERTICES: &[Vertex] = &[
-    Vertex {
-        position: [-1.0, -1.0, 0.0],
-        tex_coords: [0.0, 0.0],
-    }, // Top left
-    Vertex {
-        position: [1.0, -1.0, 0.0],
-        tex_coords: [1.0, 0.0],
-    }, // Top right
-    Vertex {
-        position: [1.0, 1.0, 0.0],
-        tex_coords: [1.0, 1.0],
-    }, // Bottom left
-    Vertex {
-        position: [-1.0, 1.0, 0.0],
-        tex_coords: [0.0, 1.0],
-    }, // Bottom right
-];
-
-// quad
-const INDICES: &[u16] = &[2, 3, 0, 1, 2, 0];
-
-impl TimeUniform {
-    fn new() -> Self {
-        Self { time: 0 }
-    }
-
-    fn update_time(&mut self, start_time: Instant) {
-        // update time to number of milliseconds since program start
-        self.time = start_time.elapsed().as_millis() as u32
-    }
-}
-
-impl MouseUniform {
-    fn new() -> Self {
-        Self {
-            cursor_pos: [0.0, 0.0],
-        }
-    }
-
-    fn update_position(&mut self, x: f32, y: f32) {
-        // update cursor position
-        // y axis is reversed from GPU coords
-        self.cursor_pos = [x, 1.0 - y];
-    }
-
-    // fn update_hovering(&mut self, hovering_over_window: bool) {
-    //    todo!()
-    //}
-}
-
-impl Vertex {
-    const ATTRIBS: [VertexAttribute; 2] = vertex_attr_array![0 => Float32x3, 1 => Float32x2];
-
-    fn desc<'a>() -> VertexBufferLayout<'a> {
-        use std::mem;
-        VertexBufferLayout {
-            array_stride: mem::size_of::<Vertex>() as BufferAddress,
-            step_mode: VertexStepMode::Vertex,
-            attributes: &Self::ATTRIBS,
-        }
-    }
 }
 
 impl State {
