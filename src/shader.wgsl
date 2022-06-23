@@ -5,6 +5,7 @@ struct Time {
 };
 
 [[group(0), binding(0)]]
+// time in milliseconds
 var<uniform> time: Time;
 
 struct Mouse {
@@ -47,11 +48,8 @@ fn vs_main(
     return out;
 }
 
-// convert from a range 0..1 to -1..1
-fn to_signed_coords(coords: vec2<f32>) -> vec2<f32> {
-    return mix(vec2<f32>(-1.0), vec2<f32>(1.0), coords);
-}
 
+// hash function for u32s
 fn pcg32_hash(input: u32) -> u32 {
     // from https://www.reedbeta.com/blog/hash-functions-for-gpu-rendering/
     // mixed congruential step first
@@ -63,23 +61,25 @@ fn pcg32_hash(input: u32) -> u32 {
 
 // random u32 from vec of 4 u32s
 fn seed(input: vec4<u32>) -> u32 {
-    return pcg32_hash(
-        pcg32_hash(pcg32_hash(input.x) + 0u) ^
-        pcg32_hash(pcg32_hash(input.y) + 1u) ^
-        pcg32_hash(pcg32_hash(input.z) + 2u) ^
+    let hashes = vec4<u32>(
+        pcg32_hash(pcg32_hash(input.x) + 0u),
+        pcg32_hash(pcg32_hash(input.y) + 1u),
+        pcg32_hash(pcg32_hash(input.z) + 2u),
         pcg32_hash(pcg32_hash(input.w) + 3u)
     );
+    return pcg32_hash(hashes.x ^ hashes.y ^ hashes.z ^ hashes.w);
 }
 
-// turn vec4 of coordinates
+// turn vec4 of coordinates into vec4 of random outputs in 0..1
 fn rand(point: vec4<u32>, seed_value: u32) -> vec4<f32> {
     let input = seed(point) ^ seed_value;
+    let max_u32 = u32(-1);
     return vec4<f32>(vec4<u32>(
         pcg32_hash(input + 0u),
         pcg32_hash(input + 1u),
         pcg32_hash(input + 2u),
         pcg32_hash(input + 3u)
-    )) / f32(u32(-1));
+    )) / f32(max_u32);
 }
 
 
@@ -88,9 +88,9 @@ fn cube(coords: vec2<f32>) -> f32 {
     return max(abs(coords.x), abs(coords.y));
 }
 
-// signed distance of a circle about 0.5, 0.5
+// signed distance of a circle about 0,0
 fn circ(uv: vec2<f32>) -> vec4<f32> {
-    return vec4<f32>(distance(uv, vec2<f32>(0.5)));
+    return vec4<f32>(length(uv));
 }
 
 // diagonal line
@@ -98,7 +98,7 @@ fn line(uv: vec2<f32>) -> vec4<f32> {
     return vec4<f32>(abs(dot(uv, vec2<f32>(1.0, -1.0))));
 }
 
-// flips line backwards if the boolean is set
+// flips line backwards if the flip boolean is set
 fn line_or_flip(flip: f32, uv: vec2<f32>) -> vec4<f32> {
     return mix(
         line(uv),
@@ -107,13 +107,116 @@ fn line_or_flip(flip: f32, uv: vec2<f32>) -> vec4<f32> {
     );
 }
 
-fn tile(pos: vec2<f32>, zoom: f32) -> vec2<f32> {
-    return fract(pos * zoom);
+// fadeout function
+fn fade(t: f32) -> f32 {
+    return ((6.0 * t - 15.0) * t + 10.0) * t * t * t;
 }
 
-fn grid(pos: vec2<f32>, zoom: f32) -> vec2<f32> {
-    return floor(pos * zoom);
+fn cube_to_one(t: f32) -> f32 {
+    let v = 1.0 - t;
+    return 1.0 - v * v * v;
 }
+
+// useful for perlin noise because:
+// f(0) = 1
+// if |x| >= 1, f(x) = 0
+fn falloff(t: f32) -> f32 {
+    return 1.0 - (3.0 - 2.0 * abs(t)) * t * t;
+}
+
+// opposite of mix, converts from a..b to 0..1
+fn from_range(a: f32, b: f32, s: f32) -> f32 {
+    return (s - a) / (b - a);
+}
+
+// presents a scalar -1..1 as a colour blue..yellow
+// for debugging
+fn show_scalar(s: f32) -> vec4<f32> {
+    return mix(
+        vec4<f32>(0.0, 0.0, 1.0, 1.0),
+        vec4<f32>(1.0, 1.0, 0.0, 1.0),
+        from_range(-1.0, 1.0, s)
+    );
+}
+
+// draws a 2d surflet about origin, facing in direction of vector
+// surflet is Ken Perlin's word for a bump next to the origin, with a negative copy mirrored about the origin
+fn surflet_2d(point: vec2<f32>, vector: vec2<f32>) -> f32 {
+    let falloff_value = falloff(point.x) * falloff(point.y);
+    // let falloff_value = max(0.0, 1.0 - length(point));
+    let gradient = dot(normalize(vector), point);
+    return gradient * falloff_value;
+}
+
+// draws a 3d surflet about origin, facing in direction of vector
+// surflet is Ken Perlin's word for a bump next to the origin, with a negative copy mirrored about the origin
+fn surflet_3d(point: vec3<f32>, vector: vec3<f32>) -> f32 {
+    let falloff_value = falloff(point.x) * falloff(point.y) * falloff(point.z);
+    let gradient = dot(normalize(vector), point);
+    return gradient * falloff_value;
+}
+
+// point is absolute coordinates for where to draw
+// corner_direction 0..1 is vector that goes from floor(point) to the corner of the square in question
+fn random_surflet_2d(point: vec2<f32>, corner_direction: vec2<f32>, seed: u32) -> f32 {
+    let square_origin = floor(point);
+    let corner = square_origin + corner_direction;
+    // convert to i32 first to avoid saturating negative floats to 0u
+    let corner_unsigned = vec2<u32>(vec2<i32>(corner));
+    // random vector based on the absolute corner
+    let random_vector = rand(corner_unsigned.xyxy, seed) - 0.5;
+    let from_corner = point - corner;
+    return surflet_2d(from_corner, random_vector.xy);
+}
+
+// point is absolute coordinates for where to draw
+// corner_direction 0..1 is vector that goes from floor(point) to the corner of the square in question
+fn random_surflet_3d(point: vec3<f32>, corner_direction: vec3<f32>, seed: u32) -> f32 {
+    let square_origin = floor(point);
+    let corner = square_origin + corner_direction;
+    // convert to i32 first to avoid saturating negative floats to 0u
+    let corner_unsigned = vec3<u32>(vec2<i32>(corner));
+    // random vector based on the absolute corner
+    let random_vector = rand(corner_unsigned.xyzx, seed) - 0.5;
+    let from_corner = point - corner;
+    return surflet_3d(from_corner, random_vector.xyz);
+}
+
+// perlin noise in 2d
+// output in -1..1
+fn perlin_2d(point: vec2<f32>, seed: u32) -> f32 {
+    var total: f32 = 0.0;
+
+    // iterate through i = 0 and i = 1
+    for (var i: i32 = 0; i < 2; i = i + 1) {
+        // iterate through j = 0 and j = 1
+        for (var j: i32 = 0; j < 2; j = j + 1) {
+            // for each vector with components in {0, 1}, which form the corners of a square 0,0 to 1,1
+            total = total + random_surflet_2d(point, vec2<f32>(vec2<i32>(i, j)), seed);
+        }
+    }
+    return total;
+}
+
+// perlin noise in 3d
+// output in -1..1
+fn perlin_3d(point: vec3<f32>, seed: u32) -> f32 {
+    var total: f32 = 0.0;
+
+    // for loops iterate i, j and k through 0 and 1
+    // each (i, j, k) representing the corner of a cube
+    for (var i: i32 = 0; i < 2; i = i + 1) {
+        for (var j: i32 = 0; j < 2; j = j + 1) {
+            for (var k: i32 = 0; k < 2; k = k + 1) {
+                // add together the surflets for each cube corner
+                total = total + random_surflet_3d(point, vec3<f32>(vec3<i32>(i, j, k)), seed);
+            }
+        }
+    }
+    return total;
+}
+
+
 // Vertex shader runs for each vertex.
 // Between vertex shader and fragment shader, GPU will interpolate between vertex outputs
 // to get many fragment inputs.
@@ -127,32 +230,17 @@ fn grid(pos: vec2<f32>, zoom: f32) -> vec2<f32> {
 fn fs_main(in: VertexOutput) -> [[location(0)]] vec4<f32> {
     let time_part = ((f32(time.time) / 6000.0));
 
-    let zoom = mouse.position.x * 2.0;
-    let coords = in.tex_coords * (10.0 + time_part * 0.0) + mouse.position.y;
+    let zoom = length(mouse.position - 0.5) * 0.0 + 20.0;
+    let zoom_centre = vec2<f32>(0.5);
+    let coords = (in.tex_coords - zoom_centre) * zoom;
 
-    let within_tile = tile(coords, zoom);
-    let tile_number = grid(coords, zoom);
+    let noise = vec3<f32>(
+        cube_to_one(perlin_3d(vec3<f32>(coords, time_part), 0u)),
+        cube_to_one(perlin_3d(vec3<f32>(coords, time_part), 1u)),
+        cube_to_one(perlin_3d(vec3<f32>(coords, time_part), 2u))
+    );
 
-    // let here = vec2<f32>(0.0, 0.0);
-    let up = vec2<f32>(0.0, 1.0);
-    let right = vec2<f32>(1.0, 0.0);
-
-    // corners at each compass direction
-    let nw = tile_number + up;
-    let ne = tile_number + up + right;
-    let sw = tile_number;
-    let se = tile_number + right;
-
-    let nw_noise = rand(vec4<u32>(nw.xyxy), 0u);
-    let ne_noise = rand(vec4<u32>(ne.xyxy), 0u);
-    let sw_noise = rand(vec4<u32>(sw.xyxy), 0u);
-    let se_noise = rand(vec4<u32>(se.xyxy), 0u);
-
-    let n_noise = mix(nw_noise, ne_noise, within_tile.x);
-    let s_noise = mix(sw_noise, se_noise, within_tile.x);
-    let value_noise = mix(n_noise, s_noise, 1.0 - within_tile.y);
-
-    return vec4<f32>(value_noise.xyz, 1.0);
+    return vec4<f32>(0.5 - noise * 0.5, 1.0);
 }
 
 
