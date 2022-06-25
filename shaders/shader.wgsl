@@ -216,6 +216,44 @@ fn perlin_3d(point: vec3<f32>, seed: u32) -> f32 {
     return total;
 }
 
+fn four_octaves_2d(point: vec2<f32>, seed: u32, weights: vec4<f32>) -> f32 {
+    let magic = 42u;
+    var seeds: vec4<u32>;
+    seeds.x = pcg32_hash(seed ^ magic) + 0u;
+    seeds.y = pcg32_hash(seed ^ magic) + 1u;
+    seeds.z = pcg32_hash(seed ^ magic) + 2u;
+    seeds.w = pcg32_hash(seed ^ magic) + 3u;
+    var out: vec4<f32>;
+    out.x = weights.x * perlin_2d(point * 1.0, seeds.x);
+    out.y = weights.y * perlin_2d(point * 2.0, seeds.y);
+    out.z = weights.z * perlin_2d(point * 4.0, seeds.z);
+    out.w = weights.w * perlin_2d(point * 8.0, seeds.w);
+    return dot(vec4<f32>(1.0), out);
+}
+
+fn four_octaves_3d(point: vec3<f32>, seed: u32, weights: vec4<f32>) -> f32 {
+    let magic = 42u;
+    var seeds: vec4<u32>;
+    seeds.x = pcg32_hash(seed ^ magic) + 0u;
+    seeds.y = pcg32_hash(seed ^ magic) + 1u;
+    seeds.z = pcg32_hash(seed ^ magic) + 2u;
+    seeds.w = pcg32_hash(seed ^ magic) + 3u;
+    var out: vec4<f32>;
+    out.x = weights.x * perlin_3d(point * 1.0, seeds.x);
+    out.y = weights.y * perlin_3d(point * 2.0, seeds.y);
+    out.z = weights.z * perlin_3d(point * 4.0, seeds.z);
+    out.w = weights.w * perlin_3d(point * 8.0, seeds.w);
+    return dot(vec4<f32>(1.0), out);
+}
+
+fn rotate2d(vector: vec2<f32>, radians: f32) -> vec2<f32> {
+    let rotation = mat2x2<f32>(
+        cos(radians), sin(radians),
+        -sin(radians), cos(radians)
+    );
+    return rotation * vector;
+}
+
 
 // Vertex shader runs for each vertex.
 // Between vertex shader and fragment shader, GPU will interpolate between vertex outputs
@@ -233,11 +271,13 @@ fn fs_main(in: VertexOutput) -> [[location(0)]] vec4<f32> {
     let zoom = length(mouse.position - 0.5) * 0.0 + 20.0;
     let zoom_centre = vec2<f32>(0.5);
     let coords = (in.tex_coords - zoom_centre) * zoom;
+    let coords = rotate2d(coords, perlin_2d(coords, 3u) * sin(time_part)) + perlin_2d(coords, 4u);
 
+    let weights = vec4<f32>(2.0, 1.0, 0.5, 0.25);
     let noise = vec3<f32>(
-        cube_to_one(perlin_3d(vec3<f32>(coords, time_part), 0u)),
-        cube_to_one(perlin_3d(vec3<f32>(coords, time_part), 1u)),
-        cube_to_one(perlin_3d(vec3<f32>(coords, time_part), 2u))
+        cube_to_one(four_octaves_3d(vec3<f32>(coords, time_part), 0u, weights)),
+        cube_to_one(four_octaves_3d(vec3<f32>(coords, time_part), 1u, weights)),
+        cube_to_one(four_octaves_3d(vec3<f32>(coords, time_part), 2u, weights))
     );
 
     return vec4<f32>(0.5 - noise * 0.5, 1.0);
