@@ -18,7 +18,9 @@ fn main() {
     log::info!("Creating event loop");
     let event_loop = EventLoop::new(); // make an event loop
     log::info!("Creating window");
-    let window = WindowBuilder::new().build(&event_loop).unwrap(); // make a window from it
+    let window = WindowBuilder::new()
+        .build(&event_loop) // make a window from it
+        .expect("Could not create window");
 
     log::info!("Parsing command line arguments");
     let config = Config::parse();
@@ -85,7 +87,7 @@ fn main() {
                 // quit if out of memory
                 Err(SurfaceError::OutOfMemory) => *control_flow = ControlFlow::Exit,
                 // should resolve other errors, (Outdated, Timeout), by next frame
-                Err(e) => eprintln!("{:?}", e),
+                Err(e) => log::error!("{:?}", e),
             }
         }
         Event::MainEventsCleared => {

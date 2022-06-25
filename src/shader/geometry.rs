@@ -34,7 +34,7 @@ pub(super) const INDICES: &[u16] = &[2, 3, 0, 1, 2, 0];
 impl Vertex {
     const ATTRIBS: [VertexAttribute; 2] = vertex_attr_array![0 => Float32x3, 1 => Float32x2];
 
-    pub(super) fn desc<'a>() -> VertexBufferLayout<'a> {
+    pub(super) fn desc<'pipeline>() -> VertexBufferLayout<'pipeline> {
         use std::mem;
         VertexBufferLayout {
             array_stride: mem::size_of::<Vertex>() as BufferAddress,

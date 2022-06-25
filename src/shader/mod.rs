@@ -36,7 +36,7 @@ fn new_pipeline(
 ) -> RenderPipeline {
     device.create_render_pipeline(&RenderPipelineDescriptor {
         label: Some("Render Pipeline"),
-        layout: Some(&render_pipeline_layout),
+        layout: Some(render_pipeline_layout),
         // vertex shader and buffers
         vertex: VertexState {
             module: &shader,
@@ -119,6 +119,8 @@ impl State {
         // instance is a handle to the GPU
         // Backends::all = Vulkan, Metal, DX12, Browser WebGPU
         let instance = wgpu::Instance::new(Backends::all()); // for making adapters and surfaces
+                                                             // SAFETY: window has to allow creating surface and reference must remain valid
+                                                             // until surface dropped
         let surface = unsafe { instance.create_surface(window) };
         let adapter = instance
             .request_adapter(&RequestAdapterOptions {
@@ -127,7 +129,7 @@ impl State {
                 force_fallback_adapter: false,
             })
             .await
-            .unwrap();
+            .expect("Could not find GPU adapter");
         // request a device with that adapter
         // devices are where the magic happens
         let (device, queue) = adapter
@@ -140,14 +142,16 @@ impl State {
                 None, // trace path
             )
             .await
-            .unwrap();
+            .expect("Could not acquire GPU device");
         // config for the surface
         log::debug!("Configuring surface");
         let surface_config = SurfaceConfiguration {
             // allows rendering textures to screen
             usage: TextureUsages::RENDER_ATTACHMENT,
             // choose texture format to match what the screen prefers
-            format: surface.get_preferred_format(&adapter).unwrap(),
+            format: surface
+                .get_preferred_format(&adapter)
+                .expect("Couldn't get adapter preferred surface format"),
             width: size.width,
             height: size.height,
             // vsync on, is the only good option on mobile devices
@@ -271,7 +275,7 @@ impl State {
 
     pub(super) fn input(&mut self, event: &WindowEvent) -> bool {
         // bool represents whether the event has been fully processed
-        match event {
+        match *event {
             WindowEvent::CursorMoved { position, .. } => {
                 self.mouse.uniform_mut().update_position(
                     (position.x / self.size.width as f64) as f32,
@@ -357,7 +361,7 @@ impl State {
         render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
         render_pass.set_index_buffer(self.index_buffer.slice(..), IndexFormat::Uint16);
         // draw three vertices with one instance
-        render_pass.draw_indexed(0..self.num_indices, 0, 0..1 as _);
+        render_pass.draw_indexed(0..self.num_indices, 0, 0..1_u32);
 
         // drop render pass (which owns a &mut encoder) so it can be .finish()ed
         drop(render_pass);
