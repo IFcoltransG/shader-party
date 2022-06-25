@@ -1,4 +1,3 @@
-use clap::Parser;
 use std::{fs, time::Instant};
 use wgpu::{util::DeviceExt, *};
 use winit::{dpi::PhysicalSize, event::*, window::Window};
@@ -13,6 +12,7 @@ use self::{
         MouseUniform, TimeUniform,
     },
 };
+use super::config::Config;
 
 fn new_shader(device: &Device, path: &str) -> ShaderModule {
     log::info!("Reading shader");
@@ -86,13 +86,6 @@ fn new_pipeline(
         // not using array textures
         multiview: None,
     })
-}
-
-#[derive(Parser, Debug)]
-#[clap(author, about, long_about = None)]
-pub(super) struct Config {
-    #[clap(short, long, value_parser, default_value = "./src/shader.wgsl")]
-    pub path: String,
 }
 
 #[derive(Debug)]

@@ -8,9 +8,10 @@ use winit::{
     window::WindowBuilder,
 };
 
+mod config;
 mod shader;
 
-use self::shader::{Config, State};
+use self::{config::Config, shader::State};
 
 fn main() {
     env_logger::init();
@@ -19,6 +20,7 @@ fn main() {
     log::info!("Creating window");
     let window = WindowBuilder::new().build(&event_loop).unwrap(); // make a window from it
 
+    log::info!("Parsing command line arguments");
     let config = Config::parse();
 
     log::info!("Initialising State");
