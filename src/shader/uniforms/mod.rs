@@ -2,13 +2,13 @@ use bytemuck::{Pod, Zeroable};
 use std::time::Instant;
 
 #[repr(C)]
-#[derive(Copy, Clone, Debug, Pod, Zeroable)]
+#[derive(Copy, Clone, Debug, Default, Pod, Zeroable)]
 pub(super) struct TimeUniform {
     time: u32,
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, Debug, Pod, Zeroable)]
+#[derive(Copy, Clone, Debug, Default, Pod, Zeroable)]
 pub(super) struct MouseUniform {
     cursor_pos: [f32; 2],
     // click_time: [u32; 3],
@@ -17,8 +17,10 @@ pub(super) struct MouseUniform {
 }
 
 impl TimeUniform {
-    pub(super) fn new() -> Self {
-        Self { time: 0 }
+    pub(super) fn new(start_time: Instant) -> Self {
+        Self {
+            time: start_time.elapsed().as_millis() as u32,
+        }
     }
 
     pub(super) fn update_time(&mut self, start_time: Instant) {
@@ -44,3 +46,5 @@ impl MouseUniform {
     //    todo!()
     //}
 }
+
+pub(super) mod bindings;

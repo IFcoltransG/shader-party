@@ -1,5 +1,6 @@
-// using https://sotrh.github.io/learn-wgpu/
+// with appreciation to https://sotrh.github.io/learn-wgpu/
 
+use clap::Parser;
 use wgpu::SurfaceError;
 use winit::{
     event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent},
@@ -9,7 +10,7 @@ use winit::{
 
 mod shader;
 
-use self::shader::State;
+use self::shader::{Config, State};
 
 fn main() {
     env_logger::init();
@@ -17,8 +18,11 @@ fn main() {
     let event_loop = EventLoop::new(); // make an event loop
     log::info!("Creating window");
     let window = WindowBuilder::new().build(&event_loop).unwrap(); // make a window from it
+
+    let config = Config::parse();
+
     log::info!("Initialising State");
-    let mut state = pollster::block_on(State::new(&window)); // could also use an async main with a crate
+    let mut state = pollster::block_on(State::new(&window, config)); // could also use an async main with a crate
 
     log::info!("Starting event loop");
     event_loop.run(move |event, _, control_flow| match event {

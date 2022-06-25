@@ -1,3 +1,4 @@
+use clap::Parser;
 use std::{fs, time::Instant};
 use wgpu::{util::DeviceExt, *};
 use winit::{dpi::PhysicalSize, event::*, window::Window};
@@ -7,15 +8,100 @@ mod uniforms;
 
 use self::{
     geometry::{Vertex, INDICES, VERTICES},
-    uniforms::{MouseUniform, TimeUniform},
+    uniforms::{
+        bindings::{Uniform, UniformBinding},
+        MouseUniform, TimeUniform,
+    },
 };
 
+fn new_shader(device: &Device, path: &str) -> ShaderModule {
+    log::info!("Reading shader");
+
+    // load shader from file
+    // let shader_source = include_str!("shader.wgsl").into();
+    let shader_source = fs::read_to_string(path)
+        .expect("Failed reading shader")
+        .into();
+    device.create_shader_module(&ShaderModuleDescriptor {
+        label: Some("Shader"),
+        source: ShaderSource::Wgsl(shader_source),
+    })
+}
+
+fn new_pipeline(
+    device: &Device,
+    surface_config: &SurfaceConfiguration,
+    render_pipeline_layout: &PipelineLayout,
+    shader: ShaderModule,
+) -> RenderPipeline {
+    device.create_render_pipeline(&RenderPipelineDescriptor {
+        label: Some("Render Pipeline"),
+        layout: Some(&render_pipeline_layout),
+        // vertex shader and buffers
+        vertex: VertexState {
+            module: &shader,
+            entry_point: "vs_main",
+            buffers: &[Vertex::desc()],
+        },
+        // fragment shader and buffers and blending modes
+        fragment: Some(FragmentState {
+            module: &shader,
+            entry_point: "fs_main",
+            targets: &[ColorTargetState {
+                // same format as the surface for easier copying
+                format: surface_config.format,
+                // don't care about old pixels, just replace them
+                blend: Some(BlendState::REPLACE),
+                // write to every colour channel including alpha
+                write_mask: ColorWrites::ALL,
+            }],
+        }),
+        // how to interpret vertices as triangles
+        primitive: PrimitiveState {
+            // chunk vertices into triplets as triangles
+            topology: PrimitiveTopology::TriangleList,
+            strip_index_format: None,
+            // a triangle is facing forward whenever vertices are arranged
+            // 'counter-clockwise'
+            front_face: FrontFace::Ccw,
+            // cull back faces
+            cull_mode: Some(Face::Back),
+            // must be Fill unless GPU supports NON_FILL_POLYGON_MODE
+            polygon_mode: PolygonMode::Fill,
+            // must be false unless DEPTH_CLIP_CONTROL
+            unclipped_depth: false,
+            // must be false unless CONSERVATIVE_RASTERIZATION
+            conservative: false,
+        },
+        depth_stencil: None,
+        // use one buffer
+        multisample: MultisampleState {
+            // only one sample
+            count: 1,
+            // bits set to use all samples
+            mask: !0,
+            // no antialiasing
+            alpha_to_coverage_enabled: false,
+        },
+        // not using array textures
+        multiview: None,
+    })
+}
+
+#[derive(Parser, Debug)]
+#[clap(author, about, long_about = None)]
+pub(super) struct Config {
+    #[clap(short, long, value_parser, default_value = "./src/shader.wgsl")]
+    pub path: String,
+}
+
+#[derive(Debug)]
 pub(super) struct State {
     surface: Surface,
     device: Device,
     queue: Queue,
-    config: SurfaceConfiguration,
-    size: winit::dpi::PhysicalSize<u32>,
+    size: PhysicalSize<u32>,
+    surface_config: SurfaceConfiguration,
     render_pipeline: RenderPipeline,
     render_pipeline_layout: PipelineLayout,
     vertex_buffer: Buffer,
@@ -23,17 +109,14 @@ pub(super) struct State {
     num_indices: u32,
     background_colour: Color,
     start_time: Instant,
-    time_uniform: TimeUniform,
-    time_buffer: Buffer,
-    time_bind_group: BindGroup,
-    mouse_uniform: MouseUniform,
-    mouse_buffer: Buffer,
-    mouse_bind_group: BindGroup,
+    time: UniformBinding<TimeUniform>,
+    mouse: UniformBinding<MouseUniform>,
+    config: Config,
 }
 
 impl State {
     // need async for creating some wgpu types
-    pub(super) async fn new(window: &Window) -> Self {
+    pub(super) async fn new(window: &Window, config: Config) -> Self {
         // make sure dimensions are nonzero (or crash)
         let size = window.inner_size();
 
@@ -67,7 +150,7 @@ impl State {
             .unwrap();
         // config for the surface
         log::debug!("Configuring surface");
-        let config = SurfaceConfiguration {
+        let surface_config = SurfaceConfiguration {
             // allows rendering textures to screen
             usage: TextureUsages::RENDER_ATTACHMENT,
             // choose texture format to match what the screen prefers
@@ -77,19 +160,12 @@ impl State {
             // vsync on, is the only good option on mobile devices
             present_mode: PresentMode::Fifo,
         };
-        surface.configure(&device, &config);
+        surface.configure(&device, &surface_config);
 
         log::debug!("Setting up uniform bindings");
-        // TIME BINDING
 
+        // TIME BINDING
         let start_time = Instant::now();
-        let mut time_uniform = TimeUniform::new();
-        time_uniform.update_time(start_time);
-        let time_buffer = device.create_buffer_init(&util::BufferInitDescriptor {
-            label: Some("Time Buffer"),
-            contents: bytemuck::cast_slice(&[time_uniform]),
-            usage: BufferUsages::all(),
-        });
         let time_bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
             label: Some("Time Buffer Bind Group Layout"),
             entries: &[BindGroupLayoutEntry {
@@ -103,22 +179,9 @@ impl State {
                 count: None,
             }],
         });
-        let time_bind_group = device.create_bind_group(&BindGroupDescriptor {
-            label: Some("time_bind_group"),
-            layout: &time_bind_group_layout,
-            entries: &[BindGroupEntry {
-                binding: 0,
-                resource: time_buffer.as_entire_binding(),
-            }],
-        });
+        let time = TimeUniform::new(start_time).make_binding(&device, &time_bind_group_layout);
 
-        // MOUSE BINDINGS
-        let mouse_uniform = MouseUniform::new();
-        let mouse_buffer = device.create_buffer_init(&util::BufferInitDescriptor {
-            label: Some("Mouse Buffer"),
-            contents: bytemuck::cast_slice(&[mouse_uniform]),
-            usage: BufferUsages::all(),
-        });
+        // MOUSE BINDING
         let mouse_bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
             label: Some("Mouse Buffer Bind Group Layout"),
             entries: &[BindGroupLayoutEntry {
@@ -132,14 +195,8 @@ impl State {
                 count: None,
             }],
         });
-        let mouse_bind_group = device.create_bind_group(&BindGroupDescriptor {
-            label: Some("mouse_bind_group"),
-            layout: &mouse_bind_group_layout,
-            entries: &[BindGroupEntry {
-                binding: 0,
-                resource: mouse_buffer.as_entire_binding(),
-            }],
-        });
+
+        let mouse = MouseUniform::new().make_binding(&device, &mouse_bind_group_layout);
 
         // Collect bind group layouts into one pipeline layout
         let render_pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
@@ -164,11 +221,12 @@ impl State {
         let num_indices = INDICES.len() as u32;
 
         // LOAD SHADER
-        let shader = Self::new_shader(&device);
+        let shader = new_shader(&device, &config.path);
 
         // COLLECT BIND GROUPS AND SHADERS INTO PIPELINE
 
-        let render_pipeline = Self::new_pipeline(&device, &config, &render_pipeline_layout, shader);
+        let render_pipeline =
+            new_pipeline(&device, &surface_config, &render_pipeline_layout, shader);
 
         // a bluish colour as default
         let background_colour = Color {
@@ -181,8 +239,8 @@ impl State {
             surface,
             device,
             queue,
-            config,
             size,
+            surface_config,
             render_pipeline,
             render_pipeline_layout,
             vertex_buffer,
@@ -190,104 +248,27 @@ impl State {
             num_indices,
             background_colour,
             start_time,
-            time_uniform,
-            time_buffer,
-            time_bind_group,
-            mouse_uniform,
-            mouse_buffer,
-            mouse_bind_group,
+            time,
+            mouse,
+            config,
         }
     }
 
-    fn new_pipeline(
-        device: &Device,
-        config: &SurfaceConfiguration,
-        render_pipeline_layout: &PipelineLayout,
-        shader: ShaderModule,
-    ) -> RenderPipeline {
-        device.create_render_pipeline(&RenderPipelineDescriptor {
-            label: Some("Render Pipeline"),
-            layout: Some(&render_pipeline_layout),
-            // vertex shader and buffers
-            vertex: VertexState {
-                module: &shader,
-                entry_point: "vs_main",
-                buffers: &[Vertex::desc()],
-            },
-            // fragment shader and buffers and blending modes
-            fragment: Some(FragmentState {
-                module: &shader,
-                entry_point: "fs_main",
-                targets: &[ColorTargetState {
-                    // same format as the surface for easier copying
-                    format: config.format,
-                    // don't care about old pixels, just replace them
-                    blend: Some(BlendState::REPLACE),
-                    // write to every colour channel including alpha
-                    write_mask: ColorWrites::ALL,
-                }],
-            }),
-            // how to interpret vertices as triangles
-            primitive: PrimitiveState {
-                // chunk vertices into triplets as triangles
-                topology: PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                // a triangle is facing forward whenever vertices are arranged
-                // 'counter-clockwise'
-                front_face: FrontFace::Ccw,
-                // cull back faces
-                cull_mode: Some(Face::Back),
-                // must be Fill unless GPU supports NON_FILL_POLYGON_MODE
-                polygon_mode: PolygonMode::Fill,
-                // must be false unless DEPTH_CLIP_CONTROL
-                unclipped_depth: false,
-                // must be false unless CONSERVATIVE_RASTERIZATION
-                conservative: false,
-            },
-            depth_stencil: None,
-            // use one buffer
-            multisample: MultisampleState {
-                // only one sample
-                count: 1,
-                // bits set to use all samples
-                mask: !0,
-                // no antialiasing
-                alpha_to_coverage_enabled: false,
-            },
-            // not using array textures
-            multiview: None,
-        })
-    }
-
-    fn new_shader(device: &Device) -> ShaderModule {
-        log::info!("Reading shader");
-
-        // load shader from file
-        // let shader_source = include_str!("shader.wgsl").into();
-        let shader_source = fs::read_to_string("./src/shader.wgsl")
-            .expect("Failed reading shader")
-            .into();
-        device.create_shader_module(&ShaderModuleDescriptor {
-            label: Some("Shader"),
-            source: ShaderSource::Wgsl(shader_source),
-        })
-    }
-
     pub(super) fn refresh_shader(&mut self) {
-        self.render_pipeline = State::new_pipeline(
+        self.render_pipeline = new_pipeline(
             &self.device,
-            &self.config,
+            &self.surface_config,
             &self.render_pipeline_layout,
-            State::new_shader(&self.device),
+            new_shader(&self.device, &self.config.path),
         )
     }
 
-    pub(super) fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
+    pub(super) fn resize(&mut self, new_size: PhysicalSize<u32>) {
         if new_size.width > 0 && new_size.height > 0 {
             self.size = new_size;
-            self.config.width = new_size.width;
-            self.config.height = new_size.height;
-            self.surface.configure(&self.device, &self.config);
+            self.surface_config.width = new_size.width;
+            self.surface_config.height = new_size.height;
+            self.surface.configure(&self.device, &self.surface_config);
         }
     }
 
@@ -299,7 +280,7 @@ impl State {
         // bool represents whether the event has been fully processed
         match event {
             WindowEvent::CursorMoved { position, .. } => {
-                self.mouse_uniform.update_position(
+                self.mouse.uniform_mut().update_position(
                     (position.x / self.size.width as f64) as f32,
                     (position.y / self.size.height as f64) as f32,
                 );
@@ -327,16 +308,16 @@ impl State {
     }
 
     pub(super) fn update(&mut self) {
-        self.time_uniform.update_time(self.start_time);
+        self.time.uniform_mut().update_time(self.start_time);
         self.queue.write_buffer(
-            &self.time_buffer,
+            self.time.buffer(),
             0,
-            bytemuck::cast_slice(&[self.time_uniform]),
+            bytemuck::cast_slice(&[*self.time.uniform()]),
         );
         self.queue.write_buffer(
-            &self.mouse_buffer,
+            self.mouse.buffer(),
             0,
-            bytemuck::cast_slice(&[self.mouse_uniform]),
+            bytemuck::cast_slice(&[*self.mouse.uniform()]),
         );
     }
 
@@ -378,8 +359,8 @@ impl State {
         });
 
         render_pass.set_pipeline(&self.render_pipeline);
-        render_pass.set_bind_group(0, &self.time_bind_group, &[]);
-        render_pass.set_bind_group(1, &self.mouse_bind_group, &[]);
+        render_pass.set_bind_group(0, self.time.bind_group(), &[]);
+        render_pass.set_bind_group(1, self.mouse.bind_group(), &[]);
         render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
         render_pass.set_index_buffer(self.index_buffer.slice(..), IndexFormat::Uint16);
         // draw three vertices with one instance
